@@ -57,7 +57,7 @@ async function main() {
 
   console.log("Classe créée :", classe.nom);
 
-  // Création de matières initiales avec volume horaire et enseignant
+  // Catalogue de matières, puis cours de la classe (coefficient et volume horaire)
   const matieres = [
     { code: "GL", nom: "Génie Logiciel", coefficient: 3.0, volumeHoraire: 30.0 },
     { code: "RESEAUX", nom: "Architecture Réseaux", coefficient: 2.0, volumeHoraire: 20.0 },
@@ -66,36 +66,40 @@ async function main() {
   ];
 
   for (const m of matieres) {
-    const existing = await prisma.matiere.findFirst({
-      where: { code: m.code, classeId: classe.id },
+    const matiere = await prisma.matiere.upsert({
+      where: { code: m.code },
+      update: {
+        nom: m.nom,
+        enseignantId: enseignant.id,
+      },
+      create: {
+        code: m.code,
+        nom: m.nom,
+        enseignantId: enseignant.id,
+      },
     });
-    if (!existing) {
-      await prisma.matiere.create({
-        data: {
-          code: m.code,
-          nom: m.nom,
-          coefficient: m.coefficient,
-          volumeHoraire: m.volumeHoraire,
-          classeId: classe.id,
-          enseignantId: enseignant.id,
-        },
-      });
-    } else {
-      await prisma.matiere.update({
-        where: { id: existing.id },
-        data: {
-          volumeHoraire: m.volumeHoraire,
-          enseignantId: existing.enseignantId || enseignant.id,
-        },
-      });
-    }
-  }
 
-  // Associer aussi les matières existantes sans enseignant à l'enseignant principal
-  await prisma.matiere.updateMany({
-    where: { enseignantId: null },
-    data: { enseignantId: enseignant.id, volumeHoraire: 20.0 },
-  });
+    await prisma.cours.upsert({
+      where: {
+        classeId_matiereId: {
+          classeId: classe.id,
+          matiereId: matiere.id,
+        },
+      },
+      update: {
+        coefficient: m.coefficient,
+        volumeHoraire: m.volumeHoraire,
+        enseignantId: enseignant.id,
+      },
+      create: {
+        classeId: classe.id,
+        matiereId: matiere.id,
+        enseignantId: enseignant.id,
+        coefficient: m.coefficient,
+        volumeHoraire: m.volumeHoraire,
+      },
+    });
+  }
 
   // Création d'un compte Chef de classe de test
   const chefPassword = await bcrypt.hash("chef123", 10);
