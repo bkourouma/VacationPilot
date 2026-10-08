@@ -1,0 +1,243 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String     @id @default(cuid())
+  username   String     @unique
+  email      String?    @unique
+  googleId   String?    @unique
+  image      String?
+  nom        String
+  motDePasse String?
+  role       String     @default("ENSEIGNANT") // "ADMINISTRATION", "ENSEIGNANT", "CHEF_CLASSE"
+  classeId   String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  matieres   Matiere[]  @relation("MatiereEnseignant")
+  cours      Cours[]    @relation("CoursEnseignant")
+  seances    Seance[]
+  classe     Classe?    @relation(fields: [classeId], references: [id])
+}
+
+model Classe {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  nom           String
+  anneeScolaire String
+  creeParId     String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  etudiants     Etudiant[]
+  cours         Cours[]
+  chefsClasse   User[]
+}
+
+model Matiere {
+  id           String     @id @default(cuid())
+  code         String     @unique
+  nom          String
+  description  String?
+  enseignantId String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  enseignant   User?      @relation("MatiereEnseignant", fields: [enseignantId], references: [id], onDelete: SetNull)
+  cours        Cours[]
+  chapitres    Chapitre[]
+}
+
+model Chapitre {
+  id              String                    @id @default(cuid())
+  matiereId       String
+  numero          Int                       @default(1)
+  titre           String
+  description     String?
+  ordre           Int                       @default(1)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  matiere         Matiere                   @relation(fields: [matiereId], references: [id], onDelete: Cascade)
+  sousChapitres   SousChapitre[]
+  seanceChapitres SeanceChapitre[]
+  validations     CoursChapitreValidation[]
+}
+
+model SousChapitre {
+  id              String                        @id @default(cuid())
+  chapitreId      String
+  titre           String
+  ordre           Int                           @default(1)
+  createdAt       DateTime                      @default(now())
+  updatedAt       DateTime                      @updatedAt
+
+  chapitre        Chapitre                      @relation(fields: [chapitreId], references: [id], onDelete: Cascade)
+  validations     CoursSousChapitreValidation[]
+}
+
+model Cours {
+  id                  String                    @id @default(cuid())
+  classeId            String
+  matiereId           String
+  enseignantId        String?
+  coefficient         Float                     @default(1.0)
+  volumeHoraire       Float                     @default(20.0) // Volume horaire prévu pour ce cours dans cette classe (ex: 20h, 30h)
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  classe              Classe                    @relation(fields: [classeId], references: [id], onDelete: Cascade)
+  matiere             Matiere                   @relation(fields: [matiereId], references: [id], onDelete: Cascade)
+  enseignant          User?                     @relation("CoursEnseignant", fields: [enseignantId], references: [id], onDelete: SetNull)
+
+  seances                 Seance[]
+  evaluations             Evaluation[]
+  chapitreValidations     CoursChapitreValidation[]
+  sousChapitreValidations CoursSousChapitreValidation[]
+
+  @@unique([classeId, matiereId])
+}
+
+model Etudiant {
+  id        String     @id @default(cuid())
+  matricule String     @unique
+  nom       String
+  prenom    String
+  contact   String?
+  email     String?
+  classeId  String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  classe    Classe     @relation(fields: [classeId], references: [id], onDelete: Cascade)
+  notes     Note[]
+  presences Presence[]
+}
+
+model Seance {
+  id              String                    @id @default(cuid())
+  date            DateTime
+  heureDebut      String?
+  heureFin        String?
+  nombreHeures    Float                     @default(2.0)
+  description     String?
+  coursId         String
+  creeParId       String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  presences       Presence[]
+  creePar         User?                     @relation(fields: [creeParId], references: [id])
+  cours           Cours                     @relation(fields: [coursId], references: [id], onDelete: Cascade)
+  chapitres               SeanceChapitre[]
+  validations             CoursChapitreValidation[]
+  sousChapitreValidations CoursSousChapitreValidation[]
+}
+
+model SeanceChapitre {
+  id         String   @id @default(cuid())
+  seanceId   String
+  chapitreId String
+  statut     String   @default("TERMINE") // "TERMINE", "EN_COURS"
+  remarque   String?
+  createdAt  DateTime @default(now())
+
+  seance     Seance   @relation(fields: [seanceId], references: [id], onDelete: Cascade)
+  chapitre   Chapitre @relation(fields: [chapitreId], references: [id], onDelete: Cascade)
+
+  @@unique([seanceId, chapitreId])
+}
+
+model CoursChapitreValidation {
+  id             String    @id @default(cuid())
+  coursId        String
+  chapitreId     String
+  seanceId       String?
+  valide         Boolean   @default(true)
+  dateValidation DateTime  @default(now())
+  remarque       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  cours          Cours     @relation(fields: [coursId], references: [id], onDelete: Cascade)
+  chapitre       Chapitre  @relation(fields: [chapitreId], references: [id], onDelete: Cascade)
+  seance         Seance?   @relation(fields: [seanceId], references: [id], onDelete: SetNull)
+
+  @@unique([coursId, chapitreId])
+}
+
+model CoursSousChapitreValidation {
+  id             String       @id @default(cuid())
+  coursId        String
+  sousChapitreId String
+  seanceId       String?
+  valide         Boolean      @default(true)
+  dateValidation DateTime     @default(now())
+  remarque       String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  cours          Cours        @relation(fields: [coursId], references: [id], onDelete: Cascade)
+  sousChapitre   SousChapitre @relation(fields: [sousChapitreId], references: [id], onDelete: Cascade)
+  seance         Seance?      @relation(fields: [seanceId], references: [id], onDelete: SetNull)
+
+  @@unique([coursId, sousChapitreId])
+}
+
+model Presence {
+  id         String   @id @default(cuid())
+  seanceId   String
+  etudiantId String
+  statut     String   @default("PRESENT")
+  remarque   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  etudiant   Etudiant @relation(fields: [etudiantId], references: [id], onDelete: Cascade)
+  seance     Seance   @relation(fields: [seanceId], references: [id], onDelete: Cascade)
+
+  @@unique([seanceId, etudiantId])
+}
+
+model Evaluation {
+  id          String   @id @default(cuid())
+  titre       String
+  date        DateTime @default(now())
+  coefficient Float    @default(1.0)
+  noteMax     Float    @default(20.0)
+  coursId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  cours       Cours    @relation(fields: [coursId], references: [id], onDelete: Cascade)
+  notes       Note[]
+}
+
+model Note {
+  id           String     @id @default(cuid())
+  evaluationId String
+  etudiantId   String
+  valeur       Float
+  commentaire  String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  etudiant     Etudiant   @relation(fields: [etudiantId], references: [id], onDelete: Cascade)
+  evaluation   Evaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, etudiantId])
+}
+
+model SystemSetting {
+  cle       String   @id
+  valeur    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
