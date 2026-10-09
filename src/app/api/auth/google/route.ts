@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { signSession } from "@/lib/auth";
 
@@ -21,7 +20,7 @@ export async function GET(request: Request) {
     }
 
     // Génération d'un état sécurisé anti-CSRF
-    const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const state = crypto.randomUUID();
 
     const googleAuthUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     googleAuthUrl.searchParams.set("client_id", clientId);
@@ -53,68 +52,65 @@ export async function GET(request: Request) {
   }
 }
 
-// POST: Authentification via ID Token Google (Google Identity Services) ou création directe
+// POST: authentification via ID token Google (Google Identity Services).
+// Le jeton est la SEULE preuve d'identité acceptée : aucune adresse email « déclarée » par le client
+// ne peut ouvrir de session (sinon n'importe qui pourrait usurper un compte enseignant ou chef de classe).
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { credential, email, nom, googleId, image } = body;
+    const body = await request.json().catch(() => ({}));
+    const credential = typeof body?.credential === "string" ? body.credential : "";
 
-    let userEmail = email?.trim().toLowerCase();
-    let userName = nom?.trim();
-    let userGoogleId = googleId;
-    let userImage = image;
-
-    // Si un ID token officiel Google est passé (via Google Identity Services)
-    if (credential) {
-      try {
-        const verifyRes = await fetch(
-          `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
-        );
-        if (verifyRes.ok) {
-          const payload = await verifyRes.json();
-          userEmail = payload.email?.toLowerCase();
-          userName = payload.name;
-          userGoogleId = payload.sub;
-          userImage = payload.picture;
-        } else {
-          return NextResponse.json(
-            { error: "Jeton Google invalide ou expiré." },
-            { status: 401 }
-          );
-        }
-      } catch (err) {
-        console.error("Erreur vérification token Google:", err);
-        return NextResponse.json(
-          { error: "Erreur lors de la validation du compte Google." },
-          { status: 500 }
-        );
-      }
-    }
-
-    // Si aucun jeton Google n'est fourni (ex: saisie directe d'email de test)
     if (!credential) {
-      if (process.env.NODE_ENV === "production") {
-        return NextResponse.json(
-          { error: "La connexion Google officielle avec jeton valide est obligatoire en production." },
-          { status: 403 }
-        );
+      return NextResponse.json(
+        { error: "Un jeton Google valide est obligatoire pour se connecter avec Google." },
+        { status: 400 }
+      );
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      return NextResponse.json(
+        { error: "La connexion Google n'est pas configurée sur ce serveur." },
+        { status: 503 }
+      );
+    }
+
+    let userEmail: string | undefined;
+    let userName: string | undefined;
+    let userGoogleId: string | undefined;
+    let userImage: string | undefined;
+
+    try {
+      const verifyRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+      );
+      if (!verifyRes.ok) {
+        return NextResponse.json({ error: "Jeton Google invalide ou expiré." }, { status: 401 });
       }
-    }
+      const payload = await verifyRes.json();
 
-    if (!userEmail) {
+      // Le jeton doit avoir été émis pour CETTE application et pour une adresse vérifiée par Google.
+      if (payload.aud !== clientId) {
+        return NextResponse.json({ error: "Jeton Google non destiné à cette application." }, { status: 401 });
+      }
+      if (payload.email_verified !== true && payload.email_verified !== "true") {
+        return NextResponse.json({ error: "L'adresse email Google n'est pas vérifiée." }, { status: 401 });
+      }
+
+      userEmail = payload.email?.toLowerCase();
+      userName = payload.name;
+      userGoogleId = payload.sub;
+      userImage = payload.picture;
+    } catch (err) {
+      console.error("Erreur vérification token Google:", err);
       return NextResponse.json(
-        { error: "L'adresse email Google est requise." },
-        { status: 400 }
+        { error: "Erreur lors de la validation du compte Google." },
+        { status: 500 }
       );
     }
 
-    // Vérification du format email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(userEmail)) {
-      return NextResponse.json(
-        { error: "Veuillez saisir une adresse email valide." },
-        { status: 400 }
-      );
+    if (!userEmail || !userGoogleId) {
+      return NextResponse.json({ error: "L'adresse email Google est requise." }, { status: 400 });
     }
 
     // Recherche de l'utilisateur existant
@@ -122,22 +118,11 @@ export async function POST(request: Request) {
       where: {
         OR: [
           { email: userEmail },
-          userGoogleId ? { googleId: userGoogleId } : { email: userEmail },
+          { googleId: userGoogleId },
         ],
       },
       include: { classe: true },
     });
-
-    // Protection anti-usurpation : les comptes d'administration ne peuvent JAMAIS être connectés sans jeton Google vérifié ou mot de passe
-    if (user && user.role === "ADMINISTRATION" && !credential) {
-      return NextResponse.json(
-        {
-          error:
-            "Les comptes de la direction pédagogique et d'administration exigent une connexion par identifiant/mot de passe ou une validation Google sécurisée.",
-        },
-        { status: 403 }
-      );
-    }
 
     if (!user) {
       // Génération d'un username unique

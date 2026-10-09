@@ -1,10 +1,8 @@
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { getJwtSecret } from "./jwt-secret";
 
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.JWT_SECRET || "default_jwt_secret_dev_32_chars_minimum_here!"
-);
 
 export interface UserSession {
   userId: string;
@@ -28,7 +26,7 @@ export async function signSession(payload: UserSession): Promise<string> {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
-    .sign(SECRET_KEY);
+    .sign(getJwtSecret());
 }
 
 export async function getSession(): Promise<UserSession | null> {
@@ -37,7 +35,7 @@ export async function getSession(): Promise<UserSession | null> {
     const token = cookieStore.get("auth_token")?.value;
     if (!token) return null;
 
-    const { payload } = await jwtVerify(token, SECRET_KEY);
+    const { payload } = await jwtVerify(token, getJwtSecret());
     return payload as unknown as UserSession;
   } catch {
     return null;

@@ -83,7 +83,7 @@ export async function GET(request: Request) {
     const name = profile.name || profile.given_name || email?.split("@")[0];
     const picture = profile.picture;
 
-    if (!email) {
+    if (!email || profile.email_verified !== true) {
       const redirectUrl = new URL("/", appUrl);
       redirectUrl.searchParams.set("error", "email_introuvable");
       return NextResponse.redirect(redirectUrl.toString());

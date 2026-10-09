@@ -1,9 +1,30 @@
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { getSession } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
+    // Réservé à l'administration : cette route écrase les clés OAuth du serveur et le fichier .env.
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: "Authentification requise." }, { status: 401 });
+    }
+    if (session.role !== "ADMINISTRATION") {
+      return NextResponse.json(
+        { error: "Seule l'administration peut configurer la connexion Google." },
+        { status: 403 }
+      );
+    }
+
+    // En production, les clés se définissent par variables d'environnement (pas d'écriture de .env à chaud).
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        { error: "En production, définissez GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans les variables d'environnement du serveur." },
+        { status: 403 }
+      );
+    }
+
     const { clientId, clientSecret } = await request.json();
 
     if (!clientId?.trim() || !clientSecret?.trim()) {
@@ -17,15 +38,15 @@ export async function POST(request: Request) {
     const trimmedSecret = clientSecret.trim();
 
     // Protection injection : interdiction des sauts de ligne et caractères d'échappement
-    if (/[\r\n\0]/.test(trimmedClientId) || /[\r\n\0]/.test(trimmedSecret)) {
+    if (/[\r\n\0"\\]/.test(trimmedClientId) || /[\r\n\0"\\]/.test(trimmedSecret)) {
       return NextResponse.json(
-        { error: "Les identifiants ne doivent pas contenir de caractères de saut de ligne." },
+        { error: "Les identifiants ne doivent pas contenir de saut de ligne, de guillemet ni d'antislash." },
         { status: 400 }
       );
     }
 
     // Validation du format Client ID Google
-    if (!trimmedClientId.includes(".apps.googleusercontent.com") && !trimmedClientId.includes("google")) {
+    if (!/^[\w-]+(\.[\w-]+)*\.apps\.googleusercontent\.com$/.test(trimmedClientId)) {
       return NextResponse.json(
         { error: "Le Client ID Google doit être un identifiant valide (ex: xxxx.apps.googleusercontent.com)." },
         { status: 400 }

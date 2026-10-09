@@ -1,3 +1,6 @@
+/* Ordre des couches : antd se place après le reset Tailwind mais avant les utilitaires */
+@layer theme, base, antd, components, utilities;
+
 @import "tailwindcss";
 
 :root {

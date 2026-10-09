@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { jwtVerify } from "jose";
+import { getJwtSecret } from "@/lib/jwt-secret";
 
-const SECRET_KEY = new TextEncoder().encode(
-  process.env.JWT_SECRET || "default_jwt_secret_dev_32_chars_minimum_here!"
-);
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -33,7 +31,7 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    await jwtVerify(token, SECRET_KEY);
+    await jwtVerify(token, getJwtSecret());
     return NextResponse.next();
   } catch {
     const loginUrl = new URL("/", request.url);

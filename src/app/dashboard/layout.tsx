@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -19,8 +19,9 @@ import {
   Building,
   Library,
   ListChecks,
-  Clock,
   Sliders,
+  ChevronDown,
+  Mail,
 } from "lucide-react";
 
 interface UserProfile {
@@ -48,6 +49,26 @@ export default function DashboardLayout({
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProfileOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [profileOpen]);
 
   useEffect(() => {
     async function checkAuth() {
@@ -67,6 +88,21 @@ export default function DashboardLayout({
     }
     checkAuth();
   }, [router]);
+
+  // Un chef de classe ne doit pas ouvrir les pages réservées au personnel,
+  // même en saisissant l'adresse à la main.
+  useEffect(() => {
+    if (user?.role !== "CHEF_CLASSE") return;
+    const pagesInterdites = [
+      "/dashboard/config",
+      "/dashboard/matieres",
+      "/dashboard/progression",
+      "/dashboard/admin/progression",
+    ];
+    if (pagesInterdites.includes(pathname)) {
+      router.replace("/dashboard");
+    }
+  }, [user, pathname, router]);
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -183,32 +219,66 @@ export default function DashboardLayout({
     },
   ];
 
+  const roleLabel = isAdmin ? "Administration" : isTeacher ? "Enseignant" : "Chef de classe";
+  const RoleIcon = isAdmin ? Building : isTeacher ? Shield : UserCheck;
+  const roleStyle = isAdmin
+    ? {
+        bg: "bg-amber-600",
+        text: "text-amber-600",
+        badge: "bg-amber-50 text-amber-700 border-amber-200",
+        banner: "from-amber-500 to-orange-400",
+      }
+    : isTeacher
+    ? {
+        bg: "bg-blue-600",
+        text: "text-blue-600",
+        badge: "bg-blue-50 text-blue-700 border-blue-200",
+        banner: "from-blue-600 to-sky-400",
+      }
+    : {
+        bg: "bg-indigo-600",
+        text: "text-indigo-600",
+        badge: "bg-indigo-50 text-indigo-700 border-indigo-200",
+        banner: "from-indigo-600 to-violet-400",
+      };
+
+  const currentPage = navigationSections
+    .flatMap((s) => s.items)
+    .filter((i) => pathname === i.href || pathname.startsWith(i.href + "/"))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+
+  const avatar = user.image ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={user.image}
+      alt={user.nom}
+      className="w-10 h-10 rounded-full object-cover shrink-0 border border-slate-200"
+    />
+  ) : (
+    <div
+      className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 text-white shadow-sm ${roleStyle.bg}`}
+    >
+      {user.nom.charAt(0).toUpperCase()}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col md:flex-row">
-      {/* Barre supérieure mobile */}
-      <div className="md:hidden no-print bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-40">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center">
-            <GraduationCap className="w-5 h-5" />
-          </div>
-          <span className="font-bold text-slate-900 text-base">VacationPro</span>
-        </div>
-        <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-2 rounded-lg text-slate-600 hover:bg-slate-100"
-        >
-          {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
-
       {/* Barre latérale desktop & mobile */}
+      {mobileMenuOpen && (
+        <div
+          className="md:hidden no-print fixed inset-0 z-40 bg-slate-900/50"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <aside
-        className={`no-print fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white flex flex-col transition-transform duration-200 ease-in-out md:translate-x-0 md:static ${
+        className={`no-print fixed inset-y-0 left-0 z-50 w-64 shrink-0 bg-slate-900 text-white flex flex-col overflow-hidden transition-transform duration-200 ease-in-out md:sticky md:top-0 md:h-screen md:self-start md:translate-x-0 ${
           mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         {/* En-tête Sidebar */}
-        <div className="p-5 border-b border-slate-800 flex items-center gap-3">
+        <div className="p-5 border-b border-slate-800 flex items-center gap-3 shrink-0">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-md shrink-0 text-white ${
             isAdmin ? "bg-amber-600 shadow-amber-500/20" : "bg-blue-600 shadow-blue-500/20"
           }`}>
@@ -224,62 +294,8 @@ export default function DashboardLayout({
           </div>
         </div>
 
-        {/* Profil utilisateur connecté */}
-        <div className="p-4 border-b border-slate-800/80 bg-slate-950/40">
-          <div className="flex items-center gap-3">
-            {user.image ? (
-              <img
-                src={user.image}
-                alt={user.nom}
-                className="w-9 h-9 rounded-full object-cover shrink-0 border border-slate-700 ring-2 ring-blue-500/30"
-              />
-            ) : (
-              <div
-                className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 text-white ${
-                  isAdmin
-                    ? "bg-amber-600"
-                    : isTeacher
-                    ? "bg-blue-600"
-                    : "bg-indigo-600"
-                }`}
-              >
-                {user.nom.charAt(0)}
-              </div>
-            )}
-            <div className="overflow-hidden">
-              <p className="text-xs font-bold text-slate-200 truncate">{user.nom}</p>
-              {user.email && (
-                <p className="text-[10px] text-slate-400 truncate">{user.email}</p>
-              )}
-              <span
-                className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full mt-0.5 ${
-                  isAdmin
-                    ? "bg-amber-900/60 text-amber-300 border border-amber-700/50"
-                    : isTeacher
-                    ? "bg-blue-900/60 text-blue-300 border border-blue-700/50"
-                    : "bg-indigo-900/60 text-indigo-300 border border-indigo-700/50"
-                }`}
-              >
-                {isAdmin ? (
-                  <Building className="w-2.5 h-2.5" />
-                ) : isTeacher ? (
-                  <Shield className="w-2.5 h-2.5" />
-                ) : (
-                  <UserCheck className="w-2.5 h-2.5" />
-                )}
-                {isAdmin ? "Administration" : isTeacher ? "Enseignant" : "Chef de classe"}
-              </span>
-            </div>
-          </div>
-          {user.classe && (
-            <p className="mt-2 text-[11px] text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded">
-              Classe : <strong className="text-slate-300">{user.classe.code}</strong>
-            </p>
-          )}
-        </div>
-
         {/* Liens de navigation par ordre d'exécution */}
-        <nav className="flex-1 p-3 space-y-3 overflow-y-auto">
+        <nav className="flex-1 min-h-0 p-3 space-y-3 overflow-y-auto">
           {navigationSections.map((section, sIdx) => {
             const visibleItems = section.items.filter((item) => item.allowed);
             if (visibleItems.length === 0) return null;
@@ -324,7 +340,7 @@ export default function DashboardLayout({
         </nav>
 
         {/* Pied de sidebar : déconnexion */}
-        <div className="p-3 border-t border-slate-800">
+        <div className="p-3 border-t border-slate-800 shrink-0">
           <button
             onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 transition"
@@ -337,6 +353,92 @@ export default function DashboardLayout({
 
       {/* Contenu principal */}
       <div className="flex-1 flex flex-col min-w-0">
+        {/* En-tête commun à toutes les pages */}
+        <header className="no-print sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+          <div className="flex items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 h-16">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="md:hidden p-2 -ml-2 rounded-lg text-slate-600 hover:bg-slate-100"
+                aria-label="Ouvrir le menu"
+              >
+                {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 leading-none">
+                  VacationPro
+                </p>
+                <p className="text-base sm:text-lg font-bold text-slate-900 truncate leading-tight mt-1">
+                  {currentPage?.name ?? "Tableau de bord"}
+                </p>
+              </div>
+            </div>
+
+            {/* Carte profil */}
+            <div className="relative shrink-0" ref={profileRef}>
+              <button
+                onClick={() => setProfileOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={profileOpen}
+                className={`flex items-center gap-3 pl-1.5 pr-3 py-1.5 rounded-full border bg-white shadow-sm transition hover:shadow-md ${
+                  profileOpen ? "border-slate-300 shadow-md" : "border-slate-200"
+                }`}
+              >
+                {avatar}
+                <div className="hidden sm:block text-left leading-tight max-w-[200px]">
+                  <p className="text-sm font-semibold text-slate-900 truncate">{user.nom}</p>
+                  <p className={`text-[11px] font-medium ${roleStyle.text}`}>{roleLabel}</p>
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 text-slate-400 transition-transform ${profileOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {profileOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl bg-white border border-slate-200 shadow-xl shadow-slate-900/10 overflow-hidden"
+                >
+                  <div className={`h-14 bg-gradient-to-r ${roleStyle.banner}`} />
+                  <div className="px-4 pb-4 -mt-7">
+                    <div className="ring-4 ring-white rounded-full w-fit">{avatar}</div>
+                    <p className="mt-2 text-sm font-bold text-slate-900 truncate">{user.nom}</p>
+                    {user.email && (
+                      <p className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5 min-w-0">
+                        <Mail className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{user.email}</span>
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2 mt-3">
+                      <span
+                        className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full border ${roleStyle.badge}`}
+                      >
+                        <RoleIcon className="w-3 h-3" />
+                        {roleLabel}
+                      </span>
+                      {user.classe && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                          Classe : {user.classe.code}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="border-t border-slate-100 p-2">
+                    <button
+                      role="menuitem"
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-semibold text-rose-600 hover:bg-rose-50 transition"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Déconnexion
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           {children}
         </main>
