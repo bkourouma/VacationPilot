@@ -1,0 +1,1 @@
+Ceci n'est pas un document Word (.docx). Il doit être refusé par l'import IA.

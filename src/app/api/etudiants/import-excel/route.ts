@@ -435,7 +435,24 @@ export async function POST(request: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const workbook = XLSX.read(buffer, { type: "buffer" });
+    // Un fichier Excel (.xlsx = zip « PK », .xls = OLE) se lit tel quel. Un fichier texte
+    // (CSV) est décodé explicitement : UTF-8 (avec ou sans BOM), sinon Windows-1252,
+    // sinon SheetJS lirait les accents comme du Latin-1 et les corromprait.
+    const estClasseur =
+      (buffer[0] === 0x50 && buffer[1] === 0x4b) ||
+      (buffer[0] === 0xd0 && buffer[1] === 0xcf && buffer[2] === 0x11 && buffer[3] === 0xe0);
+    let workbook: XLSX.WorkBook;
+    if (estClasseur) {
+      workbook = XLSX.read(buffer, { type: "buffer" });
+    } else {
+      let texte: string;
+      try {
+        texte = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+      } catch {
+        texte = new TextDecoder("windows-1252").decode(buffer);
+      }
+      workbook = XLSX.read(texte.replace(/^﻿/, ""), { type: "string" });
+    }
 
     // Inspect all sheets in the workbook to select the best one
     let bestResult: SheetParseResult | null = null;
@@ -472,11 +489,26 @@ export async function POST(request: Request) {
     let importedCount = 0;
     let updatedCount = 0;
     const errors: string[] = [];
+    const avertissements: string[] = [];
+    const matriculesVus = new Set<string>();
 
     for (const st of bestResult.students) {
       let matricule = st.matricule;
       const nom = st.nom;
       const prenom = st.prenom;
+
+      // Contrôles avant enregistrement : longueur des noms et matricule en double dans le fichier
+      if (nom.length > 100 || prenom.length > 100) {
+        avertissements.push(`« ${nom.slice(0, 30)}… » ignoré : nom ou prénom de plus de 100 caractères.`);
+        continue;
+      }
+      if (matricule) {
+        if (matriculesVus.has(matricule)) {
+          avertissements.push(`Matricule ${matricule} en double dans le fichier : « ${nom} ${prenom} » ignoré.`);
+          continue;
+        }
+        matriculesVus.add(matricule);
+      }
       const contact = st.contact || null;
       const email = st.email || null;
 
@@ -544,7 +576,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `Importation réussie : ${importedCount} nouvel(s) auditeur(s) inscrit(s), ${updatedCount} mis à jour dans la classe ${targetClasse.code}${sheetInfo}.`,
+      message: `Importation réussie : ${importedCount} nouvel(s) auditeur(s) inscrit(s), ${updatedCount} mis à jour dans la classe ${targetClasse.code}${sheetInfo}.${
+        avertissements.length > 0 ? ` ${avertissements.length} ligne(s) ignorée(s).` : ""
+      }`,
+      avertissements: avertissements.length > 0 ? avertissements.slice(0, 10) : undefined,
       sheetName: bestResult.sheetName,
       importedCount,
       updatedCount,

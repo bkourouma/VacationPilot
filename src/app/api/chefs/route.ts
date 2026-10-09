@@ -47,6 +47,13 @@ export async function POST(request: Request) {
       );
     }
 
+    if (String(password).length < 6) {
+      return NextResponse.json(
+        { error: "Le mot de passe doit contenir au moins 6 caractères." },
+        { status: 400 }
+      );
+    }
+
     const cleanUsername = username.trim().toLowerCase();
     const existing = await prisma.user.findUnique({
       where: { username: cleanUsername },

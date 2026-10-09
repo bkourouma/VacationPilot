@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { validateMaxLength, validateNumber } from "@/lib/validation";
 
 export async function GET(
   request: Request,
@@ -94,6 +95,20 @@ export async function PUT(
 
     const body = await request.json();
     const { coefficient, volumeHoraire, enseignantId, code, nom, description } = body;
+
+    const erreurSaisie =
+      (volumeHoraire !== undefined && volumeHoraire !== null
+        ? validateNumber(volumeHoraire, "Le volume horaire", 1, 200)
+        : null) ||
+      (coefficient !== undefined && coefficient !== null
+        ? validateNumber(coefficient, "Le coefficient", 0.5, 20)
+        : null) ||
+      validateMaxLength(code, "Le code de la matière", 20) ||
+      validateMaxLength(nom, "L'intitulé de la matière", 150) ||
+      validateMaxLength(description, "La description", 1000);
+    if (erreurSaisie) {
+      return NextResponse.json({ error: erreurSaisie }, { status: 400 });
+    }
 
     const updated = await prisma.cours.update({
       where: { id },

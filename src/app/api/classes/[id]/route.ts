@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import {
+  isAnneeAcademiqueValide,
+  MESSAGE_ANNEE_ACADEMIQUE,
+  validateMaxLength,
+} from "@/lib/validation";
 
 export async function GET(
   request: Request,
@@ -101,6 +106,28 @@ export async function PUT(
 
     const { id } = await params;
     const { code, nom, anneeScolaire } = await request.json();
+
+    const erreurSaisie =
+      validateMaxLength(code, "Le code de la classe", 20) ||
+      validateMaxLength(nom, "Le nom de la classe", 100) ||
+      (anneeScolaire && !isAnneeAcademiqueValide(anneeScolaire)
+        ? MESSAGE_ANNEE_ACADEMIQUE
+        : null);
+    if (erreurSaisie) {
+      return NextResponse.json({ error: erreurSaisie }, { status: 400 });
+    }
+
+    if (code) {
+      const doublon = await prisma.classe.findFirst({
+        where: { code: code.trim().toUpperCase(), NOT: { id } },
+      });
+      if (doublon) {
+        return NextResponse.json(
+          { error: "Une classe avec ce code existe déjà." },
+          { status: 400 }
+        );
+      }
+    }
 
     const updated = await prisma.classe.update({
       where: { id },

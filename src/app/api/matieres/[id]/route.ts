@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { validateMaxLength } from "@/lib/validation";
 
 export async function GET(
   request: Request,
@@ -139,6 +140,14 @@ export async function PUT(
         { error: "Le code et le nom de la matière sont obligatoires." },
         { status: 400 }
       );
+    }
+
+    const erreurSaisie =
+      validateMaxLength(code, "Le code de la matière", 20) ||
+      validateMaxLength(nom, "L'intitulé de la matière", 150) ||
+      validateMaxLength(description, "La description", 1000);
+    if (erreurSaisie) {
+      return NextResponse.json({ error: erreurSaisie }, { status: 400 });
     }
 
     const cleanCode = code.trim().toUpperCase();

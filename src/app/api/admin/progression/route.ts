@@ -76,6 +76,7 @@ export async function GET(request: Request) {
       matiereNom: string;
       matiereCode: string;
       classeCode: string;
+      classeId: string;
       enseignantNom: string;
       message: string;
     }[] = [];
@@ -125,12 +126,13 @@ export async function GET(request: Request) {
         });
 
         totalPresencesAll += presencesCount;
-        totalPresentsAll += presentsCount;
+        // Les absences justifiées comptent comme présences (même règle que le portail étudiant)
+        totalPresentsAll += presentsCount + justifiesCount;
         totalRetardsAll += retardsCount;
 
         const tauxAssiduite =
           presencesCount > 0
-            ? Math.round(((presentsCount + retardsCount) / presencesCount) * 100)
+            ? Math.round(((presentsCount + retardsCount + justifiesCount) / presencesCount) * 100)
             : 100;
 
         // Statistiques des notes
@@ -159,6 +161,7 @@ export async function GET(request: Request) {
 
         // Détection des alertes et retards
         const alertes: string[] = [];
+        let enRetard = false;
         let statut: "NON_DEMARRE" | "EN_COURS" | "TERMINE" = "EN_COURS";
 
         if (heuresEffectuees === 0) {
@@ -170,6 +173,7 @@ export async function GET(request: Request) {
             matiereNom: c.matiere.nom,
             matiereCode: c.matiere.code,
             classeCode: classe.code,
+            classeId: classe.id,
             enseignantNom: c.enseignant?.nom || "Non assigné",
             message: "Le cours n'a pas encore démarré.",
           });
@@ -181,7 +185,7 @@ export async function GET(request: Request) {
           matieresEnCoursCount++;
 
           if (joursDepuisDerniereSeance !== null && joursDepuisDerniereSeance > 14) {
-            matieresEnRetardCount++;
+            enRetard = true;
             alertes.push(
               `Retard potentiel : Aucune séance depuis ${joursDepuisDerniereSeance} jours.`
             );
@@ -190,12 +194,14 @@ export async function GET(request: Request) {
               matiereNom: c.matiere.nom,
               matiereCode: c.matiere.code,
               classeCode: classe.code,
+            classeId: classe.id,
               enseignantNom: c.enseignant?.nom || "Non assigné",
               message: `Retard : Inactif depuis ${joursDepuisDerniereSeance} jours (${heuresEffectuees}h/${volumeHoraire}h faites).`,
             });
           }
 
           if (progressionPct >= 50 && c.evaluations.length === 0) {
+            enRetard = true;
             alertes.push(
               "Retard d'évaluation : > 50% du volume horaire réalisé sans aucune note saisie."
             );
@@ -204,6 +210,7 @@ export async function GET(request: Request) {
               matiereNom: c.matiere.nom,
               matiereCode: c.matiere.code,
               classeCode: classe.code,
+            classeId: classe.id,
               enseignantNom: c.enseignant?.nom || "Non assigné",
               message:
                 "Retard évaluation : Déjà 50% du cours effectué sans aucun devoir ou note.",
@@ -217,6 +224,8 @@ export async function GET(request: Request) {
             );
           }
         }
+
+        if (enRetard) matieresEnRetardCount++;
 
         // Alerte étudiant retards
         const pctRetards =
@@ -304,6 +313,10 @@ export async function GET(request: Request) {
       },
       orderBy: { nom: "asc" },
     });
+
+    // Alertes les plus graves en premier (URGENT, puis ATTENTION, puis INFO)
+    const rangGravite = { URGENT: 0, ATTENTION: 1, INFO: 2 } as const;
+    alertesGlobales.sort((a, b) => rangGravite[a.type] - rangGravite[b.type]);
 
     const tauxGlobalAssiduite =
       totalPresencesAll > 0

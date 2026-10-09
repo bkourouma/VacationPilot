@@ -1,18 +1,27 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { Prisma } from "@prisma/client";
+import { saveProgressionForSeance } from "@/lib/seance-progression";
 
 export async function GET(request: Request) {
   try {
     const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+    }
+
+    // Un chef de classe ne voit que les séances de sa propre classe
+    if (session.role === "CHEF_CLASSE" && !session.classeId) {
+      return NextResponse.json([]);
+    }
+
     const { searchParams } = new URL(request.url);
     const coursId = searchParams.get("coursId");
     const matiereId = searchParams.get("matiereId");
     const classeId = searchParams.get("classeId");
     const enseignantId = searchParams.get("enseignantId");
 
-    const whereClause: Record<string, unknown> = {};
+    let whereClause: Record<string, unknown> = {};
 
     if (coursId) {
       whereClause.coursId = coursId;
@@ -33,6 +42,12 @@ export async function GET(request: Request) {
     } else if (session?.role === "ENSEIGNANT") {
       whereClause.cours = {
         enseignantId: session.userId,
+      };
+    }
+
+    if (session.role === "CHEF_CLASSE") {
+      whereClause = {
+        AND: [whereClause, { cours: { classeId: session.classeId } }],
       };
     }
 
@@ -101,141 +116,26 @@ export async function GET(request: Request) {
   }
 }
 
-// Helper pour enregistrer la progression (chapitres et sous-chapitres) liée à une séance
-async function saveProgressionForSeance(
-  tx: Prisma.TransactionClient,
-  seanceId: string,
+// Cherche une séance identique (même cours, même date, mêmes horaires) pour éviter les doublons
+async function trouverSeanceIdentique(
   coursId: string,
-  parsedDate: Date,
-  chapitreIds?: string[],
-  sousChapitreIds?: string[]
+  date: string,
+  heureDebut?: string | null,
+  heureFin?: string | null
 ) {
-  const coveredChapitreIds = new Set<string>(chapitreIds || []);
-
-  // 1. Enregistrer les sous-chapitres sélectionnés
-  if (Array.isArray(sousChapitreIds) && sousChapitreIds.length > 0) {
-    for (const scId of sousChapitreIds) {
-      const sc = await tx.sousChapitre.findUnique({
-        where: { id: scId },
-        select: { id: true, chapitreId: true },
-      });
-      if (sc) {
-        coveredChapitreIds.add(sc.chapitreId);
-        await tx.coursSousChapitreValidation.upsert({
-          where: {
-            coursId_sousChapitreId: { coursId, sousChapitreId: scId },
-          },
-          update: {
-            valide: true,
-            seanceId,
-            dateValidation: parsedDate,
-          },
-          create: {
-            coursId,
-            sousChapitreId: scId,
-            seanceId,
-            valide: true,
-            dateValidation: parsedDate,
-          },
-        });
-      }
-    }
-  }
-
-  // 2. Pour les chapitres explicitement cochés en entier
-  if (Array.isArray(chapitreIds) && chapitreIds.length > 0) {
-    for (const chId of chapitreIds) {
-      await tx.coursChapitreValidation.upsert({
-        where: {
-          coursId_chapitreId: { coursId, chapitreId: chId },
-        },
-        update: {
-          valide: true,
-          seanceId,
-          dateValidation: parsedDate,
-        },
-        create: {
-          coursId,
-          chapitreId: chId,
-          seanceId,
-          valide: true,
-          dateValidation: parsedDate,
-        },
-      });
-
-      // Valider aussi tous les sous-chapitres de ce chapitre
-      const subs = await tx.sousChapitre.findMany({
-        where: { chapitreId: chId },
-        select: { id: true },
-      });
-      for (const sub of subs) {
-        await tx.coursSousChapitreValidation.upsert({
-          where: {
-            coursId_sousChapitreId: { coursId, sousChapitreId: sub.id },
-          },
-          update: {
-            valide: true,
-            seanceId,
-            dateValidation: parsedDate,
-          },
-          create: {
-            coursId,
-            sousChapitreId: sub.id,
-            seanceId,
-            valide: true,
-            dateValidation: parsedDate,
-          },
-        });
-      }
-    }
-  }
-
-  // 3. Associer les chapitres couverts à la séance (SeanceChapitre)
-  for (const chId of coveredChapitreIds) {
-    await tx.seanceChapitre.upsert({
-      where: {
-        seanceId_chapitreId: { seanceId, chapitreId: chId },
-      },
-      update: { statut: "TERMINE" },
-      create: {
-        seanceId,
-        chapitreId: chId,
-        statut: "TERMINE",
-      },
-    });
-
-    // Vérifier si tous les sous-chapitres de ce chapitre sont désormais validés pour ce cours
-    const totalSubs = await tx.sousChapitre.count({ where: { chapitreId: chId } });
-    if (totalSubs > 0) {
-      const validSubs = await tx.coursSousChapitreValidation.count({
-        where: {
-          coursId,
-          valide: true,
-          sousChapitre: { chapitreId: chId },
-        },
-      });
-      if (validSubs >= totalSubs) {
-        await tx.coursChapitreValidation.upsert({
-          where: {
-            coursId_chapitreId: { coursId, chapitreId: chId },
-          },
-          update: {
-            valide: true,
-            seanceId,
-            dateValidation: parsedDate,
-          },
-          create: {
-            coursId,
-            chapitreId: chId,
-            seanceId,
-            valide: true,
-            dateValidation: parsedDate,
-          },
-        });
-      }
-    }
-  }
+  return prisma.seance.findFirst({
+    where: {
+      coursId,
+      date: new Date(date),
+      heureDebut: heureDebut || null,
+      heureFin: heureFin || null,
+    },
+    select: { id: true },
+  });
 }
+
+const MESSAGE_SEANCE_EN_DOUBLE =
+  "Une séance identique existe déjà pour ce cours (même date et mêmes horaires). Modifiez-la depuis l'historique au lieu d'en créer une seconde.";
 
 export async function POST(request: Request) {
   try {
@@ -267,6 +167,22 @@ export async function POST(request: Request) {
           { error: "Vous n'avez pas le droit de saisir les présences pour cette classe." },
           { status: 403 }
         );
+      }
+
+      for (const item of seancesToCreate) {
+        const itemTargetId = item.coursId || item.matiereId || cours.id;
+        const coursItem =
+          itemTargetId === firstTargetId
+            ? cours
+            : await prisma.cours.findFirst({
+                where: { OR: [{ id: itemTargetId }, { matiereId: itemTargetId }] },
+              });
+        if (
+          coursItem &&
+          (await trouverSeanceIdentique(coursItem.id, item.date, item.heureDebut, item.heureFin))
+        ) {
+          return NextResponse.json({ error: MESSAGE_SEANCE_EN_DOUBLE }, { status: 409 });
+        }
       }
 
       const createdSeances = await prisma.$transaction(async (tx) => {
@@ -368,6 +284,10 @@ export async function POST(request: Request) {
         { error: "Vous n'avez pas le droit de saisir les présences pour cette classe." },
         { status: 403 }
       );
+    }
+
+    if (await trouverSeanceIdentique(cours.id, date, heureDebut, heureFin)) {
+      return NextResponse.json({ error: MESSAGE_SEANCE_EN_DOUBLE }, { status: 409 });
     }
 
     const parsedNbHeures = parseFloat(nombreHeures) || 2.0;

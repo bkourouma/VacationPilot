@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { validateNumber } from "@/lib/validation";
 
 export async function GET(
   request: Request,
@@ -91,7 +92,31 @@ export async function PUT(
       return NextResponse.json({ error: "Évaluation non trouvée." }, { status: 404 });
     }
 
+    const erreurParametres =
+      (coefficient !== undefined && coefficient !== null
+        ? validateNumber(coefficient, "Le coefficient", 0.5, 10)
+        : null) ||
+      (noteMax !== undefined && noteMax !== null
+        ? validateNumber(noteMax, "Le barème", 1, 100)
+        : null);
+    if (erreurParametres) {
+      return NextResponse.json({ error: erreurParametres }, { status: 400 });
+    }
+
     const max = noteMax !== undefined ? parseFloat(noteMax) : evaluation.noteMax;
+
+    // Chaque note renseignée doit être un nombre compris entre 0 et le barème
+    if (Array.isArray(notes)) {
+      for (const n of notes) {
+        if (!n.etudiantId || n.valeur === null || n.valeur === undefined || n.valeur === "") {
+          continue;
+        }
+        const erreurNote = validateNumber(n.valeur, `La note "${n.valeur}"`, 0, max);
+        if (erreurNote) {
+          return NextResponse.json({ error: erreurNote }, { status: 400 });
+        }
+      }
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.evaluation.update({

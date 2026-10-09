@@ -8,6 +8,12 @@ export async function GET() {
     if (!session) {
       return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
     }
+    if (session.role === "CHEF_CLASSE") {
+      return NextResponse.json(
+        { error: "Accès réservé aux enseignants ou à l'administration." },
+        { status: 403 }
+      );
+    }
 
     const enseignants = await prisma.user.findMany({
       where: {

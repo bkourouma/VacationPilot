@@ -118,8 +118,16 @@ export async function POST(request: Request) {
     // Extraction du texte brut via mammoth
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const result = await mammoth.extractRawText({ buffer });
-    const rawText = result.value || "";
+    let rawText = "";
+    try {
+      const result = await mammoth.extractRawText({ buffer });
+      rawText = result.value || "";
+    } catch {
+      return NextResponse.json(
+        { error: "Document Word illisible ou corrompu. Vérifiez qu'il s'agit bien d'un fichier .docx valide." },
+        { status: 400 }
+      );
+    }
 
     if (rawText.trim().length < 20) {
       return NextResponse.json(

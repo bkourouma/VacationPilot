@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
-import { Prisma } from "@prisma/client";
+import { saveProgressionForSeance } from "@/lib/seance-progression";
 
 export async function GET(
   request: Request,
@@ -73,137 +73,6 @@ export async function GET(
   } catch (error) {
     console.error("Erreur GET seance by ID:", error);
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
-  }
-}
-
-// Helper pour enregistrer la progression (chapitres et sous-chapitres) liée à une séance
-async function saveProgressionForSeance(
-  tx: Prisma.TransactionClient,
-  seanceId: string,
-  coursId: string,
-  parsedDate: Date,
-  chapitreIds?: string[],
-  sousChapitreIds?: string[]
-) {
-  const coveredChapitreIds = new Set<string>(chapitreIds || []);
-
-  if (Array.isArray(sousChapitreIds) && sousChapitreIds.length > 0) {
-    for (const scId of sousChapitreIds) {
-      const sc = await tx.sousChapitre.findUnique({
-        where: { id: scId },
-        select: { id: true, chapitreId: true },
-      });
-      if (sc) {
-        coveredChapitreIds.add(sc.chapitreId);
-        await tx.coursSousChapitreValidation.upsert({
-          where: {
-            coursId_sousChapitreId: { coursId, sousChapitreId: scId },
-          },
-          update: {
-            valide: true,
-            seanceId,
-            dateValidation: parsedDate,
-          },
-          create: {
-            coursId,
-            sousChapitreId: scId,
-            seanceId,
-            valide: true,
-            dateValidation: parsedDate,
-          },
-        });
-      }
-    }
-  }
-
-  if (Array.isArray(chapitreIds) && chapitreIds.length > 0) {
-    for (const chId of chapitreIds) {
-      await tx.coursChapitreValidation.upsert({
-        where: {
-          coursId_chapitreId: { coursId, chapitreId: chId },
-        },
-        update: {
-          valide: true,
-          seanceId,
-          dateValidation: parsedDate,
-        },
-        create: {
-          coursId,
-          chapitreId: chId,
-          seanceId,
-          valide: true,
-          dateValidation: parsedDate,
-        },
-      });
-
-      const subs = await tx.sousChapitre.findMany({
-        where: { chapitreId: chId },
-        select: { id: true },
-      });
-      for (const sub of subs) {
-        await tx.coursSousChapitreValidation.upsert({
-          where: {
-            coursId_sousChapitreId: { coursId, sousChapitreId: sub.id },
-          },
-          update: {
-            valide: true,
-            seanceId,
-            dateValidation: parsedDate,
-          },
-          create: {
-            coursId,
-            sousChapitreId: sub.id,
-            seanceId,
-            valide: true,
-            dateValidation: parsedDate,
-          },
-        });
-      }
-    }
-  }
-
-  for (const chId of coveredChapitreIds) {
-    await tx.seanceChapitre.upsert({
-      where: {
-        seanceId_chapitreId: { seanceId, chapitreId: chId },
-      },
-      update: { statut: "TERMINE" },
-      create: {
-        seanceId,
-        chapitreId: chId,
-        statut: "TERMINE",
-      },
-    });
-
-    const totalSubs = await tx.sousChapitre.count({ where: { chapitreId: chId } });
-    if (totalSubs > 0) {
-      const validSubs = await tx.coursSousChapitreValidation.count({
-        where: {
-          coursId,
-          valide: true,
-          sousChapitre: { chapitreId: chId },
-        },
-      });
-      if (validSubs >= totalSubs) {
-        await tx.coursChapitreValidation.upsert({
-          where: {
-            coursId_chapitreId: { coursId, chapitreId: chId },
-          },
-          update: {
-            valide: true,
-            seanceId,
-            dateValidation: parsedDate,
-          },
-          create: {
-            coursId,
-            chapitreId: chId,
-            seanceId,
-            valide: true,
-            dateValidation: parsedDate,
-          },
-        });
-      }
-    }
   }
 }
 
@@ -319,7 +188,13 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    await prisma.seance.delete({ where: { id } });
+    // Retirer aussi les validations de chapitres et sous-chapitres obtenues grâce à cette séance,
+    // sinon la progression resterait faussée après la suppression.
+    await prisma.$transaction([
+      prisma.coursSousChapitreValidation.deleteMany({ where: { seanceId: id } }),
+      prisma.coursChapitreValidation.deleteMany({ where: { seanceId: id } }),
+      prisma.seance.delete({ where: { id } }),
+    ]);
 
     return NextResponse.json({ success: true, message: "Séance supprimée." });
   } catch (error) {

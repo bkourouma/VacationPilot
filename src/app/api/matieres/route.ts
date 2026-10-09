@@ -1,12 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { validateMaxLength } from "@/lib/validation";
 
 export async function GET(request: Request) {
   try {
     const session = await getSession();
     if (!session) {
       return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
+    }
+    if (session.role === "CHEF_CLASSE") {
+      return NextResponse.json(
+        { error: "Accès réservé aux enseignants ou à l'administration." },
+        { status: 403 }
+      );
     }
 
     const { searchParams } = new URL(request.url);
@@ -68,6 +75,14 @@ export async function POST(request: Request) {
         { error: "Le code et l'intitulé de la matière sont obligatoires." },
         { status: 400 }
       );
+    }
+
+    const erreurSaisie =
+      validateMaxLength(code, "Le code de la matière", 20) ||
+      validateMaxLength(nom, "L'intitulé de la matière", 150) ||
+      validateMaxLength(description, "La description", 1000);
+    if (erreurSaisie) {
+      return NextResponse.json({ error: erreurSaisie }, { status: 400 });
     }
 
     const cleanCode = code.trim().toUpperCase();

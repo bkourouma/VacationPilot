@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { validateMaxLength } from "@/lib/validation";
 
 export async function GET(request: Request) {
   try {
@@ -14,7 +15,10 @@ export async function GET(request: Request) {
     const mine = searchParams.get("mine") === "true";
 
     const whereClause: Record<string, unknown> = {};
-    if (classeId) {
+    if (session.role === "CHEF_CLASSE") {
+      // Un chef de classe ne voit que les étudiants de sa propre classe
+      whereClause.classeId = session.classeId ?? "__aucune__";
+    } else if (classeId) {
       whereClause.classeId = classeId;
     } else if (mine && session.role === "ENSEIGNANT") {
       whereClause.classe = {
@@ -84,6 +88,10 @@ export async function POST(request: Request) {
         const nom = item.nom?.trim();
         const prenom = item.prenom?.trim() || "";
         if (!nom) continue;
+        if (nom.length > 100 || prenom.length > 100) {
+          errorsCount++;
+          continue;
+        }
 
         // Génération automatique d'un matricule si absent
         let matricule = item.matricule?.trim().toUpperCase();
@@ -147,6 +155,16 @@ export async function POST(request: Request) {
         { error: "Le nom et la classe sont obligatoires." },
         { status: 400 }
       );
+    }
+
+    const erreurSaisie =
+      validateMaxLength(nom, "Le nom", 100) ||
+      validateMaxLength(prenom, "Le prénom", 100) ||
+      validateMaxLength(rawMatricule, "Le matricule", 30) ||
+      validateMaxLength(contact, "Le contact", 40) ||
+      validateMaxLength(email, "L'email", 120);
+    if (erreurSaisie) {
+      return NextResponse.json({ error: erreurSaisie }, { status: 400 });
     }
 
     const targetClasse = await prisma.classe.findUnique({ where: { id: classeId } });

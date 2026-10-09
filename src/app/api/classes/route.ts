@@ -1,17 +1,27 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import {
+  isAnneeAcademiqueValide,
+  MESSAGE_ANNEE_ACADEMIQUE,
+  validateMaxLength,
+} from "@/lib/validation";
 
 export async function GET(request: Request) {
   try {
     const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const getAll = searchParams.get("all") === "true";
 
     let whereClause: Record<string, unknown> = {};
 
-    if (session?.role === "CHEF_CLASSE" && session.classeId) {
-      whereClause = { id: session.classeId };
+    if (session.role === "CHEF_CLASSE") {
+      // Un chef de classe ne voit que sa classe (aucune si elle n'est pas définie)
+      whereClause = { id: session.classeId ?? "__aucune__" };
     } else if (session?.role === "ENSEIGNANT" && !getAll) {
       // Pour l'appel (présences) et les notes : strictement les classes où l'enseignant a un cours
       whereClause = {
@@ -104,6 +114,14 @@ export async function POST(request: Request) {
         { error: "Tous les champs (Code, Nom, Année) sont obligatoires." },
         { status: 400 }
       );
+    }
+
+    const erreurSaisie =
+      validateMaxLength(code, "Le code de la classe", 20) ||
+      validateMaxLength(nom, "Le nom de la classe", 100) ||
+      (isAnneeAcademiqueValide(anneeScolaire) ? null : MESSAGE_ANNEE_ACADEMIQUE);
+    if (erreurSaisie) {
+      return NextResponse.json({ error: erreurSaisie }, { status: 400 });
     }
 
     const existing = await prisma.classe.findUnique({

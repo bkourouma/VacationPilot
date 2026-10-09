@@ -8,6 +8,12 @@ export async function GET() {
     if (!session) {
       return NextResponse.json({ error: "Non autorisé" }, { status: 401 });
     }
+    if (session.role !== "ADMINISTRATION" && session.role !== "ENSEIGNANT") {
+      return NextResponse.json(
+        { error: "Accès réservé aux enseignants ou à l'administration." },
+        { status: 403 }
+      );
+    }
 
     const config = await getAiConfig();
 

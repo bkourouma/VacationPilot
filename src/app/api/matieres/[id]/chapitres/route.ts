@@ -80,13 +80,19 @@ export async function POST(
         );
       }
 
+      // Un chapitre ou sous-chapitre qui garde le même titre est mis à jour sur place :
+      // sa progression déjà validée est conservée. Seuls les éléments retirés de la liste
+      // (ou dont le titre change) sont supprimés ou recréés.
+      const normaliser = (t: string) => t.trim().toLowerCase().replace(/\s+/g, " ");
+
       const result = await prisma.$transaction(async (tx) => {
-        if (replaceAll) {
-          // Supprimer les anciens chapitres de la matière (cascade supprime les sous-chapitres)
-          await tx.chapitre.deleteMany({
-            where: { matiereId },
-          });
-        }
+        const existants = replaceAll
+          ? await tx.chapitre.findMany({
+              where: { matiereId },
+              include: { sousChapitres: true },
+            })
+          : [];
+        const nonReutilises = new Set(existants.map((c) => c.id));
 
         const created = [];
         for (let i = 0; i < chapitres.length; i++) {
@@ -95,6 +101,10 @@ export async function POST(
 
           const num = item.numero !== undefined ? parseInt(item.numero) : i + 1;
           const ord = item.ordre !== undefined ? parseInt(item.ordre) : i + 1;
+          const numero = isNaN(num) ? i + 1 : num;
+          const ordre = isNaN(ord) ? i + 1 : ord;
+          const titre = item.titre.trim();
+          const description = item.description?.trim() || null;
 
           const rawSousChapitres = Array.isArray(item.sousChapitres) ? item.sousChapitres : [];
           const sousChapitresData = rawSousChapitres
@@ -109,13 +119,60 @@ export async function POST(
             })
             .filter(Boolean) as Array<{ titre: string; ordre: number }>;
 
+          const existant = existants.find(
+            (c) => nonReutilises.has(c.id) && normaliser(c.titre) === normaliser(titre)
+          );
+
+          if (existant) {
+            nonReutilises.delete(existant.id);
+            await tx.chapitre.update({
+              where: { id: existant.id },
+              data: { numero, ordre, description },
+            });
+
+            const sousNonReutilises = new Set(existant.sousChapitres.map((sc) => sc.id));
+            let sousAjoutes = false;
+            for (const sc of sousChapitresData) {
+              const sousExistant = existant.sousChapitres.find(
+                (e) => sousNonReutilises.has(e.id) && normaliser(e.titre) === normaliser(sc.titre)
+              );
+              if (sousExistant) {
+                sousNonReutilises.delete(sousExistant.id);
+                await tx.sousChapitre.update({
+                  where: { id: sousExistant.id },
+                  data: { ordre: sc.ordre },
+                });
+              } else {
+                sousAjoutes = true;
+                await tx.sousChapitre.create({
+                  data: { chapitreId: existant.id, titre: sc.titre, ordre: sc.ordre },
+                });
+              }
+            }
+            if (sousNonReutilises.size > 0) {
+              await tx.sousChapitre.deleteMany({ where: { id: { in: [...sousNonReutilises] } } });
+            }
+            // Un sous-chapitre ajouté à un chapitre déjà validé le rend de nouveau incomplet
+            if (sousAjoutes) {
+              await tx.coursChapitreValidation.deleteMany({ where: { chapitreId: existant.id } });
+            }
+
+            created.push(
+              await tx.chapitre.findUniqueOrThrow({
+                where: { id: existant.id },
+                include: { sousChapitres: { orderBy: { ordre: "asc" } } },
+              })
+            );
+            continue;
+          }
+
           const chap = await tx.chapitre.create({
             data: {
               matiereId,
-              numero: isNaN(num) ? i + 1 : num,
-              titre: item.titre.trim(),
-              description: item.description?.trim() || null,
-              ordre: isNaN(ord) ? i + 1 : ord,
+              numero,
+              titre,
+              description,
+              ordre,
               sousChapitres:
                 sousChapitresData.length > 0
                   ? {
@@ -130,6 +187,11 @@ export async function POST(
             },
           });
           created.push(chap);
+        }
+
+        // Chapitres retirés de la liste : suppression (leurs validations suivent en cascade)
+        if (nonReutilises.size > 0) {
+          await tx.chapitre.deleteMany({ where: { id: { in: [...nonReutilises] } } });
         }
 
         return created;
